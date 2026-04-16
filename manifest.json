@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Subtitle for U-NEXT",
+  "version": "1.0.0",
+  "permissions": ["storage", "declarativeNetRequest"],
+  "host_permissions": [
+    "https://api.opensubtitles.com/*"
+  ],
+    "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+
+    "content_scripts": [
+    {
+      "matches": ["https://video.unext.jp/*"],
+      "js": ["content.js"]
+    }
+  ]
+
+}
