@@ -1,20 +1,19 @@
-import { CONFIG } from './config.js';
-
 const OPEN_SUBTITLES_API_URL = "https://api.opensubtitles.com/api/v1";
 
-const API_KEY = CONFIG.OPEN_SUBTITLES_API_KEY;
-const USER_AGENT = CONFIG.USER_AGENT;
+// ストレージから設定を読み込んでヘッダー書き換えルールを更新する関数
+async function updateNetRequestRules() {
+    const res = await chrome.storage.local.get(['global_settings']);
+    const settings = res.global_settings || {};
+    const userAgent = settings.userAgent || "TemporaryUserAgent";
 
-// 拡張機能起動時にルールを設定
-chrome.runtime.onInstalled.addListener(() => {
     const rules = [{
         id: 1,
         priority: 1,
         action: {
             type: "modifyHeaders",
             requestHeaders: [
-                { header: "User-Agent", operation: "set", value: USER_AGENT },
-                { header: "Origin", operation: "remove" } // Originを消してTalendに近づける
+                { header: "User-Agent", operation: "set", value: userAgent },
+                { header: "Origin", operation: "remove" }
             ]
         },
         condition: {
@@ -22,79 +21,70 @@ chrome.runtime.onInstalled.addListener(() => {
             resourceTypes: ["xmlhttprequest"]
         }
     }];
-    
-    // 既存のルールをクリアして新しいルールを適用
-    chrome.declarativeNetRequest.updateDynamicRules({
+
+    await chrome.declarativeNetRequest.updateDynamicRules({
         removeRuleIds: [1],
         addRules: rules
     });
-});
+}
 
+// インストール・更新時に実行
+chrome.runtime.onInstalled.addListener(updateNetRequestRules);
+
+// メッセージリスナー
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === "updateSettings") {
+        updateNetRequestRules().then(() => sendResponse({ success: true }));
+        return true;
+    }
+
     if (request.action === "searchSubtitles") {
-        searchSubtitles(request.query, request.year)
-            .then(data => sendResponse({ success: true, data }))
-            .catch(error => sendResponse({ success: false, error: error.message }));
-        return true; 
+        handleSearch(request, sendResponse);
+        return true;
     }
 
     if (request.action === "downloadSubtitle") {
-        downloadSubtitle(request.fileId)
-            .then(data => sendResponse({ success: true, data }))
-            .catch(error => sendResponse({ success: false, error: error.message }));
+        handleDownload(request, sendResponse);
         return true;
     }
 });
 
-async function searchSubtitles(query, year) {
-    let url = `${OPEN_SUBTITLES_API_URL}/subtitles?query=${encodeURIComponent(query)}&languages=en&order_by=download_count`;
-    
-    if (year) {
-        url += `&year=${encodeURIComponent(year)}`;
-    }
-    
-    const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-            'Api-Key': API_KEY,
-            'Accept': 'application/json'
-            // User-AgentはdeclarativeNetRequestが自動で付けてくれる
-        }
-    });
+async function handleSearch(request, sendResponse) {
+    try {
+        const res = await chrome.storage.local.get(['global_settings']);
+        const apiKey = res.global_settings?.apiKey;
+        if (!apiKey) throw new Error("APIキーが設定されていません");
 
-    if (!response.ok) {
-        throw new Error(`Search failed: ${response.status} ${response.statusText}`);
+        let url = `${OPEN_SUBTITLES_API_URL}/subtitles?query=${encodeURIComponent(request.query)}&languages=en&order_by=download_count`;
+        if (request.year) url += `&year=${encodeURIComponent(request.year)}`;
+
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: { 'Api-Key': apiKey, 'Accept': 'application/json' }
+        });
+        const data = await response.json();
+        sendResponse({ success: true, data });
+    } catch (e) {
+        sendResponse({ success: false, error: e.message });
     }
-    return await response.json();
 }
 
-async function downloadSubtitle(fileId) {
-    const downloadUrl = `${OPEN_SUBTITLES_API_URL}/download`;
-    const response = await fetch(downloadUrl, {
-        method: 'POST',
-        headers: {
-            'Api-Key': API_KEY,
-            'User-Agent': USER_AGENT, 
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ file_id: fileId })
-    });
-
-    if (!response.ok) {
-        throw new Error(`Failed to get download link: ${response.status} ${response.statusText}`);
+async function handleDownload(request, sendResponse) {
+    try {
+        const res = await chrome.storage.local.get(['global_settings']);
+        const { apiKey, userAgent } = res.global_settings || {};
+        
+        const response = await fetch(`${OPEN_SUBTITLES_API_URL}/download`, {
+            method: 'POST',
+            headers: { 'Api-Key': apiKey, 'User-Agent': userAgent, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file_id: request.fileId })
+        });
+        const downloadInfo = await response.json();
+        
+        const srtResponse = await fetch(downloadInfo.link, { headers: { 'User-Agent': userAgent } });
+        const text = await srtResponse.text();
+        sendResponse({ success: true, data: text });
+    } catch (e) {
+        sendResponse({ success: false, error: e.message });
     }
-
-    const downloadInfo = await response.json();
-    
-    const srtResponse = await fetch(downloadInfo.link, {
-        headers: {
-            'User-Agent': USER_AGENT
-        }
-    });
-    
-    if (!srtResponse.ok) {
-        throw new Error(`Failed to download SRT file`);
-    }
-    
-    return await srtResponse.text();
 }

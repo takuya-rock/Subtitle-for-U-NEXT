@@ -1,5 +1,3 @@
-console.log("U-NEXT Subtitle Pro: Ultra版 起動！");
-
 let overlay, textNode;
 let subtitles = [];
 let srtContent = "";
@@ -188,19 +186,35 @@ const setupUI = () => {
     // ファイル選択
     const fileRow = document.createElement('div');
     fileRow.style.cssText = "display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; padding-top: 5px; border-top: 1px solid #333;";
-    
     const fileNameLabel = document.createElement('span');
     fileNameLabel.id = "file-name-label";
-    fileNameLabel.style.cssText = "font-size: 11px; color: #aaa; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 300px;";
+    fileNameLabel.style.cssText = "font-size: 11px; color: #aaa; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 270px;";
     fileNameLabel.innerText = "📄 " + fileName;
     
     const fileInput = document.createElement('input');
     fileInput.type = 'file'; fileInput.accept = '.srt'; fileInput.style.display = 'none';
     
-        const fileIconBtn = document.createElement('button');
+    const btnWrapper = document.createElement('div'); // ボタンを横に並べるための親
+    btnWrapper.style.cssText = "display: flex; gap: 4px;";
+    
+    const fileIconBtn = document.createElement('button');
     fileIconBtn.innerHTML = "📂 変更";
     fileIconBtn.style.cssText = "background: #333; color: #00ffcc; border: 1px solid #00ffcc; border-radius: 4px; padding: 2px 8px; font-size: 10px; cursor: pointer;";
     fileIconBtn.onclick = () => fileInput.click();
+
+    // 【新規】手動クリアボタン
+    const clearBtn = document.createElement('button');
+    clearBtn.innerHTML = "🗑️ クリア";
+    clearBtn.style.cssText = "background: #333; color: #ff4444; border: 1px solid #ff4444; border-radius: 4px; padding: 2px 8px; font-size: 10px; cursor: pointer;";
+    clearBtn.onclick = () => {
+        const key = getVideoKey();
+        chrome.storage.local.remove(key, () => {
+            loadVideoSettings(true); // データを消してからUIを再読み込み
+        });
+    };
+
+    btnWrapper.appendChild(fileIconBtn);
+    btnWrapper.appendChild(clearBtn);
 
     fileInput.onchange = (e) => {
         const file = e.target.files[0];
@@ -212,7 +226,7 @@ const setupUI = () => {
     };
 
     fileRow.appendChild(fileNameLabel);
-    fileRow.appendChild(fileIconBtn);
+    fileRow.appendChild(btnWrapper);
     fileRow.appendChild(fileInput);
 
     panel.appendChild(fileRow);
@@ -223,7 +237,7 @@ const setupUI = () => {
     
     let currentSelectedItem = null;
     const searchBar = document.createElement('div');
-    searchBar.style.cssText = "display: flex; gap: 4px; margin-bottom: 5px;";
+    searchBar.style.cssText = "display: flex; gap: 4px; margin-bottom: 5px; align-items: center;";
     
     const searchInput = document.createElement('input');
     searchInput.placeholder = "作品名...";
@@ -238,14 +252,24 @@ const setupUI = () => {
     const searchBtn = document.createElement('button');
     searchBtn.innerText = "検索";
     searchBtn.style.cssText = "background: #00ffcc; color: black; border: none; border-radius: 4px; padding: 4px 10px; font-size: 11px; font-weight: bold; cursor: pointer; flex-shrink: 0;";
+
+    // 【新規】API設定切り替え用の鍵アイコンボタン
+    const settingsToggleBtn = document.createElement('button');
+    settingsToggleBtn.innerText = "🔑";
+    settingsToggleBtn.title = "API設定を表示/非表示";
+    settingsToggleBtn.style.cssText = "background: #333; color: #aaa; border: 1px solid #444; border-radius: 4px; padding: 4px 6px; font-size: 11px; cursor: pointer; flex-shrink: 0;";
     
     const resultList = document.createElement('div');
     resultList.style.cssText = "max-height: 200px; overflow-y: auto; background: #111; border-radius: 4px; font-size: 10px; display: none; border: 1px solid #333;";
 
     const hideResultBtn = document.createElement('button');
     hideResultBtn.innerText = "✖";
-    hideResultBtn.style.cssText = "background: #333; color: #888; border: none; border-radius: 4px; padding: 4px 8px; font-size: 11px; cursor: pointer; display: none; margin-left: auto;";
-    hideResultBtn.onclick = () => { resultList.style.display = "none"; hideResultBtn.style.display = "none"; };
+    hideResultBtn.style.cssText = "background: #333; color: #888; border: none; border-radius: 4px; padding: 4px 8px; font-size: 11px; cursor: pointer; display: none;";
+    hideResultBtn.onclick = () => {
+        resultList.style.display = "none";
+        hideResultBtn.style.display = "none";
+        settingsToggleBtn.style.display = "block";
+    };
 
     [searchInput, yearInput].forEach(input => {
         input.onkeydown = (e) => {
@@ -266,6 +290,10 @@ const setupUI = () => {
         resultList.innerHTML = '<div style="padding:5px; color:#aaa;">検索中...</div>';
         resultList.style.display = "block";
         hideResultBtn.style.display = "block";
+        settingsToggleBtn.style.display = "none";
+        
+        // 念のため設定セクションも閉じておく
+        settingsSection.style.display = "none";
 
         chrome.runtime.sendMessage({ action: "searchSubtitles", query, year }, (response) => {
             searchBtn.innerText = "検索";
@@ -349,14 +377,81 @@ const setupUI = () => {
         });
     };
 
+    // 鍵アイコンクリックで表示を切り替え
+    settingsToggleBtn.onclick = () => {
+        const isHidden = settingsSection.style.display === "none";
+        settingsSection.style.display = isHidden ? "block" : "none";
+        settingsToggleBtn.style.borderColor = isHidden ? "#00ffcc" : "#444";
+    };
+
     searchBar.appendChild(searchInput);
     searchBar.appendChild(yearInput);
     searchBtn.onclick = searchBtn.onclick; // Ensure binding
     searchBar.appendChild(searchBtn);
+    searchBar.appendChild(settingsToggleBtn); 
     searchBar.appendChild(hideResultBtn);
     searchSection.appendChild(searchBar);
     searchSection.appendChild(resultList);
     panel.appendChild(searchSection);
+
+    // --- setupUI 関数内の適切な場所（パネルの下部など）に追加 ---
+
+    const settingsSection = document.createElement('div');
+    settingsSection.style.cssText = "margin-top: 15px; padding-top: 10px; border-top: 2px solid #444; display: none;";
+
+    const settingsTitle = document.createElement('div');
+    settingsTitle.innerText = "🔑 API Settings";
+    settingsTitle.style.cssText = "font-size: 11px; color: #00ffcc; margin-bottom: 8px; font-weight: bold;";
+    settingsSection.appendChild(settingsTitle);
+
+    const createSettingInput = (placeholder, key) => {
+        const input = document.createElement('input');
+        input.type = "text";
+        input.placeholder = placeholder;
+        input.style.cssText = "width: 100%; background: #111; color: white; border: 1px solid #444; border-radius: 4px; padding: 4px 8px; font-size: 10px; margin-bottom: 5px; box-sizing: border-box;";
+        ["keydown", "keyup", "keypress"].forEach(ev => input.addEventListener(ev, e => e.stopPropagation()));
+        return input;
+    };
+
+    const userAgentInput = createSettingInput("User Agent (App Name)", "userAgent");
+    const apiKeyInput = createSettingInput("OpenSubtitles API Key", "apiKey");
+    const saveSettingsBtn = document.createElement('button');
+    saveSettingsBtn.innerText = "設定を保存";
+    saveSettingsBtn.style.cssText = "width: 100%; background: #444; color: #00ffcc; border: 1px solid #00ffcc; border-radius: 4px; padding: 4px; font-size: 10px; cursor: pointer; font-weight: bold;";
+
+    // 保存処理
+    saveSettingsBtn.onclick = () => {
+        const globalSettings = {
+            userAgent: userAgentInput.value.trim(),
+            apiKey: apiKeyInput.value.trim()            
+        };
+        chrome.storage.local.set({ global_settings: globalSettings }, () => {
+            // background.js にルール更新を通知
+            chrome.runtime.sendMessage({ action: "updateSettings" }, (response) => {
+                if (response?.success) {
+                    saveSettingsBtn.innerText = "✅ 保存完了";
+                    saveSettingsBtn.style.background = "#004400";
+                    setTimeout(() => {
+                        saveSettingsBtn.innerText = "設定を保存";
+                        saveSettingsBtn.style.background = "#444";
+                    }, 2000);
+                }
+            });
+        });
+    };
+
+    // 初期値の読み込み
+    chrome.storage.local.get(['global_settings'], (res) => {
+        if (res.global_settings) {
+            userAgentInput.value = res.global_settings.userAgent || "";
+            apiKeyInput.value = res.global_settings.apiKey || "";
+        }
+    });
+
+    settingsSection.appendChild(userAgentInput);
+    settingsSection.appendChild(apiKeyInput);
+    settingsSection.appendChild(saveSettingsBtn);
+    panel.appendChild(settingsSection);
 
     // 手動設定項目
     const createControlRow = (label, currentVal, step, id, onChange) => {
@@ -462,34 +557,32 @@ const loadVideoSettings = (isForceUpdateUI = false, callback = null) => {
             offset = data.savedOffset !== undefined ? data.savedOffset : 0;
             bottomPercent = data.savedBottom !== undefined ? data.savedBottom : 15;
             fontSize = data.savedFontSize !== undefined ? data.savedFontSize : 14;
+        } else {
+            // 【新規】データがない場合は、字幕情報のみをクリアする
+            srtContent = "";
+            subtitles = [];
+            fileName = "未選択";
+            subId = "";
+            offset = 0;
+            targetSubIndex = 0;
+            // ※フォントサイズや位置(bottomPercent)はユーザーの好みなので、あえて残しておくのが親切だぞ
         }
 
         const updateUI = () => {
             const fileNameLabel = document.getElementById("file-name-label");
             const syncInput = document.getElementById("sync-input-field");
-            const posInput = document.getElementById("pos-input-field");
-            const sizeInput = document.getElementById("size-input-field");
-
+            // ... (既存のUI更新処理)
             if (fileNameLabel) {
                 fileNameLabel.innerText = "📄 " + fileName;
                 fileNameLabel.style.color = hasData ? "#00ffcc" : "#aaa";
             }
             if (syncInput) syncInput.value = offset;
-            if (posInput) posInput.value = bottomPercent;
-            if (sizeInput) sizeInput.value = fontSize;
-            
-            if (overlay) overlay.style.bottom = bottomPercent + "%";
-            if (textNode) {
-                textNode.style.fontSize = fontSize + "px";
-                textNode.innerHTML = ""; // 設定読み込み時は一旦クリア
-            }
-            if (window.updateManagerPreview) window.updateManagerPreview();
+            if (textNode) textNode.innerHTML = ""; // 画面上の字幕を消去
         };
 
         if (document.getElementById("sub-pro-panel") || isForceUpdateUI) {
             updateUI();
         }
-
         if (callback) callback(hasData);
     });
 };
